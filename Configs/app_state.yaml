@@ -1,0 +1,11 @@
+esp:
+  connect: false
+  ip: 192.168.1.50
+  port: 8080
+
+relay_1:
+  state: true
+
+relay_2:
+  state: false
+

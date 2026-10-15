@@ -1,0 +1,8 @@
+# Derived from actual imports in the Python source files.
+fastapi
+pydantic
+PyYAML
+flask
+
+# ASGI server required to run the FastAPI app (uvicorn api_server:app)
+uvicorn
