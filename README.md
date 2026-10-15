@@ -60,6 +60,21 @@ flowchart LR
     FLASK -->|HTTP| WEB
 ```
 
+## Project Structure
+
+```
+api_server.py          FastAPI app and endpoints (uvicorn api_server:app)
+espserver/
+  esp_client.py        EspClient: the only code that touches the TCP socket
+  state.py             pure helpers: relay keys, toggle, default config, log tail
+KeyFunctions/          YAML read/write/update helpers
+Configs/               app_state.yaml (relay state + ESP ip/port)
+web_ui.py              Flask app
+HomeApp/               MQTT web dashboard
+tests/                 pytest suite (fake socket, no hardware needed)
+*.ino                  ESP8266 firmware (TCP and MQTT variants)
+```
+
 ## Setup
 
 Requires Python 3.10+ (the code uses `str | list` type unions).
@@ -104,6 +119,15 @@ python -m http.server 5500 --directory HomeApp
 Flash the appropriate `.ino` firmware (`btnRebounceTCP.ino` or
 `btnRebounceMQTT.ino`) to the ESP8266 using the Arduino IDE.
 
+## Tests
+
+```bash
+pip install pytest httpx
+pytest
+```
+
+The tests use a fake socket, so no ESP8266 is required.
+
 ## Usage Example
 
 ```bash
@@ -134,8 +158,6 @@ curl http://localhost:8000/relays
 
 ## Limitations / Next Steps
 
-- Credentials are currently hardcoded in `HomeApp/mqtt_secrets.js` and in
-  `btnRebounceTCP.ino`; move all secrets out of source control before sharing.
 - CORS is set to allow all origins (`*`) — restrict for production.
 - The REST/TCP path and the MQTT path do not share state; the FastAPI YAML state
   is not updated by MQTT-driven changes.

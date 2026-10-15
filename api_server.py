@@ -15,8 +15,6 @@ CODE AUTHOR : Azeem Ur Rehman
 import sys
 import os
 import logging
-import socket
-import time
 
 # --- FastAPI imports ---
 from fastapi import FastAPI, HTTPException
@@ -26,6 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import utility functions from KeyFunctions
 from KeyFunctions.keyFunctions import read_yaml_file, write_yaml_file, update_yaml_file
+from espserver.esp_client import EspClient
+from espserver.state import default_config, relay_key, tail_latest_log, toggle_state
 
 # ========================================================================================
 # Config and Logging Setup
@@ -60,9 +60,9 @@ app.add_middleware(
 )
 
 # ========================================================================================
-# In-memory Client Socket
+# In-memory ESP Client (single TCP connection)
 # ========================================================================================
-client_socket = None
+esp = EspClient()
 
 # ========================================================================================
 # API Models
@@ -80,14 +80,11 @@ def connect():
     """
     Connect to the ESP device using TCP socket.
     """
-    global client_socket
     config = read_yaml_file(CONFIG_PATH)
     if config["esp"]["connect"]:
         return {"message": "Already connected"}
     try:
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_socket.settimeout(5)
-        client_socket.connect((config["esp"]["ip"], config["esp"]["port"]))
+        esp.connect(config["esp"]["ip"], config["esp"]["port"])
         config["esp"]["connect"] = True
         write_yaml_file(CONFIG_PATH, config)
         logger.info("✅ Connected to ESP")
@@ -101,13 +98,11 @@ def disconnect():
     """
     Disconnect from the ESP device.
     """
-    global client_socket
     config = read_yaml_file(CONFIG_PATH)
     if not config["esp"]["connect"]:
         return {"message": "Already disconnected"}
     try:
-        if client_socket:
-            client_socket.close()
+        esp.close()
         config["esp"]["connect"] = False
         write_yaml_file(CONFIG_PATH, config)
         logger.info("✅ Disconnected from ESP")
@@ -121,17 +116,13 @@ def toggle_relay(req: RelayRequest):
     """
     Toggle the state of a relay on the ESP device.
     """
-    global client_socket
     config = read_yaml_file(CONFIG_PATH)
     if not config["esp"]["connect"]:
         raise HTTPException(status_code=400, detail="ESP not connected")
     try:
-        client_socket.send((str(req.relay_num) + '\n').encode())
-        time.sleep(0.1)
-        response = client_socket.recv(1024).decode().strip()
-        relay_key = f"relay_{req.relay_num}"
-        config[relay_key]["state"] = not config[relay_key]["state"]
-        update_yaml_file(CONFIG_PATH, relay_key, config[relay_key])
+        response = esp.toggle_relay(req.relay_num)
+        key = relay_key(req.relay_num)
+        update_yaml_file(CONFIG_PATH, key, toggle_state(config, req.relay_num))
         logger.info(f"Toggled relay {req.relay_num}: {response}")
         return {"relay": req.relay_num, "response": response}
     except Exception as e:
@@ -144,10 +135,10 @@ def get_relay_state(relay_num: int):
     Get the current state of a specific relay.
     """
     config = read_yaml_file(CONFIG_PATH)
-    relay_key = f"relay_{relay_num}"
-    if relay_key not in config:
+    key = relay_key(relay_num)
+    if key not in config:
         raise HTTPException(status_code=404, detail="Relay not found")
-    return {"relay": relay_num, "state": config[relay_key]["state"]}
+    return {"relay": relay_num, "state": config[key]["state"]}
 
 @app.get("/relays")
 def get_all_relays():
@@ -166,12 +157,7 @@ def get_logs():
     Fetch the last 20 lines from the latest log file.
     """
     log_dir = os.path.expanduser('~/Library/Logs/LuluApp/Logs')
-    files = sorted([f for f in os.listdir(log_dir) if f.startswith("log_")])
-    if not files:
-        return {"logs": []}
-    with open(os.path.join(log_dir, files[-1]), "r") as f:
-        lines = f.readlines()[-20:]
-    return {"logs": lines}
+    return {"logs": tail_latest_log(log_dir)}
 
 # add function for resetting config file
 @app.post("/reset")
@@ -179,20 +165,7 @@ def reset_config():
     """
     Reset the configuration file to default values.
     """
-    default_config = {
-        "esp": {
-            "connect": False,
-            "ip": "192.168.1.50",
-            "port": 8080
-        },
-        "relay_1": {
-            "state": False
-        },
-        "relay_2": {
-            "state": False
-        }
-    }
-    write_yaml_file(CONFIG_PATH, default_config)
+    write_yaml_file(CONFIG_PATH, default_config())
     logger.info("✅ Config file reset to default values")
     return {"message": "Config file reset to default values"}
 
